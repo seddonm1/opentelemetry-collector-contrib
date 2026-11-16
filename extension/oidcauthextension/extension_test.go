@@ -5,6 +5,9 @@ package oidcauthextension
 
 import (
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -14,6 +17,8 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1151,4 +1156,77 @@ func TestShutdown(t *testing.T) {
 
 	// verify
 	assert.NoError(t, err)
+}
+
+// Exercise every file-supported algorithm against an endpoint without discovery.
+func TestPublicKeysURLSigningAlgorithms(t *testing.T) {
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	_, edKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+
+	for _, alg := range allSupportedAlgorithms {
+		t.Run(string(alg), func(t *testing.T) {
+			var key crypto.Signer = rsaKey
+			switch alg {
+			case jose.ES256, jose.ES384, jose.ES512:
+				curve := elliptic.P256()
+				if alg == jose.ES384 {
+					curve = elliptic.P384()
+				}
+				if alg == jose.ES512 {
+					curve = elliptic.P521()
+				}
+				key, err = ecdsa.GenerateKey(curve, rand.Reader)
+				require.NoError(t, err)
+
+			case jose.EdDSA:
+				key = edKey
+			}
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/keys", r.URL.Path)
+				if r.URL.Path != "/keys" {
+					http.NotFound(w, r)
+					return
+				}
+
+				require.NoError(t, json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: key.Public(), KeyID: "test"}}}))
+			}))
+			defer server.Close()
+
+			p := newTestExtension(t, &Config{
+				Providers: []ProviderCfg{
+					{
+						IssuerURL:     "https://issuer.example",
+						Audience:      "test",
+						PublicKeysURL: server.URL + "/keys",
+					},
+				},
+			})
+			require.NoError(t, p.Start(t.Context(), componenttest.NewNopHost()))
+			defer func() { require.NoError(t, p.Shutdown(t.Context())) }()
+			signer, err := jose.NewSigner(jose.SigningKey{Algorithm: alg, Key: key}, (&jose.SignerOptions{}).WithHeader("kid", "test"))
+			require.NoError(t, err)
+
+			payload, err := json.Marshal(map[string]any{
+				"iss": "https://issuer.example",
+				"aud": "test",
+				"sub": "user",
+				"exp": time.Now().Add(time.Minute).Unix(),
+			})
+			require.NoError(t, err)
+
+			signed, err := signer.Sign(payload)
+			require.NoError(t, err)
+
+			token, err := signed.CompactSerialize()
+			require.NoError(t, err)
+
+			_, err = p.(extensionauth.Server).Authenticate(t.Context(), map[string][]string{"authorization": {"Bearer " + token}})
+			require.NoError(t, err)
+
+		})
+	}
 }

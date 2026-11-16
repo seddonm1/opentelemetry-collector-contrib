@@ -183,3 +183,21 @@ func TestPublicKeysFile(t *testing.T) {
 		})
 	}
 }
+
+func TestPublicKeysURLValidation(t *testing.T) {
+	p := ProviderCfg{
+		IssuerURL:     "https://issuer.example",
+		Audience:      "test",
+		PublicKeysURL: "https://keys.example/jwks",
+	}
+	require.NoError(t, p.Validate())
+
+	p.PublicKeysFile = "keys.json"
+	require.ErrorContains(t, p.Validate(), "mutually exclusive")
+
+	p.PublicKeysFile = ""
+	for _, endpoint := range []string{"/keys", "ftp://example.com/keys", "://"} {
+		p.PublicKeysURL = endpoint
+		require.Error(t, p.Validate())
+	}
+}

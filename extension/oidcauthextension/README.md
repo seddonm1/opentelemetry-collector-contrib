@@ -81,6 +81,24 @@ extensions:
         public_keys_file: /path/to/jwks.json
 ```
 
+Alternatively, configure `public_keys_url` on a provider to fetch a [JWK Set]
+directly from an HTTP or HTTPS endpoint, bypassing discovery. `issuer_url` remains
+required for issuer validation and provider matching. The URL supports the same
+RSA, ECDSA, and Ed25519 signing algorithms as `public_keys_file`.
+
+Keys are fetched lazily during authentication, cached, and refreshed as needed.
+The existing `issuer_ca_path` applies to the public keys endpoint.
+`public_keys_url` and `public_keys_file` are mutually exclusive.
+
+```yaml
+extensions:
+  oidc:
+    providers:
+      - issuer_url: https://auth.example.com
+        audience: my-service
+        public_keys_url: https://auth.example.com/keys
+```
+
 [OpenID Connect Discovery]: https://openid.net/specs/openid-connect-discovery-1_0-final.html
 [JWK Set]: https://datatracker.ietf.org/doc/html/rfc7517#section-5
 

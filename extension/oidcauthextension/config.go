@@ -9,8 +9,10 @@ import (
 	"crypto/ed25519"
 	"crypto/rsa"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -108,6 +110,9 @@ func (cfg *Config) Validate() (errs error) {
 }
 
 type ProviderCfg struct {
+	// PublicKeysURL bypasses discovery using a remote JWKS endpoint.
+	PublicKeysURL string `mapstructure:"public_keys_url"`
+
 	// IssuerURL is the base URL for the OIDC provider.
 	// Required.
 	IssuerURL string `mapstructure:"issuer_url"`
@@ -150,6 +155,17 @@ func (p *ProviderCfg) Validate() error {
 	}
 	if p.IssuerURL == "" {
 		return errNoIssuerURL
+	}
+
+	if p.PublicKeysURL != "" {
+		if p.PublicKeysFile != "" {
+			return errors.New("public_keys_url and public_keys_file are mutually exclusive")
+		}
+
+		u, err := url.Parse(p.PublicKeysURL)
+		if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+			return errors.New("public_keys_url must be an absolute HTTP or HTTPS URL")
+		}
 	}
 
 	if p.PublicKeysFile != "" {
